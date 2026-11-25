@@ -1,0 +1,41 @@
+{
+  "name": "Baseerah",
+  "nativeName": "بصيرة",
+  "tagline": "Arabic-first RTL platform for the Islamic sciences, Quran and daily worship",
+  "theme": "teal",
+  "chips": [
+    "Expo 58",
+    "Quran",
+    "Academy",
+    "Supabase",
+    "RTL Native"
+  ],
+  "floating": [
+    "v1.2.5 READY",
+    "604 PAGES",
+    "20-VOL READER"
+  ],
+  "ticker": [
+    "STAGED ISLAMIC ACADEMY",
+    "TANZIL UTHMANI QURAN",
+    "HERITAGE BOOK COVERS",
+    "CHUNKED ENCYCLOPEDIA",
+    "PRAYER WIDGET & 3D KAABA"
+  ],
+  "letter": "ب",
+  "colors": {
+    "accent": "#C4A66A",
+    "glow": "#145C4B"
+  },
+  "mark": {
+    "strokes": [
+      "M24 6 L42 24 L24 42 L6 24 Z"
+    ],
+    "strokeWidth": 4.5,
+    "dot": {
+      "cx": 24,
+      "cy": 24,
+      "r": 5.5
+    }
+  }
+}

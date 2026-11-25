@@ -1,0 +1,131 @@
+name: Build Android APK & Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish APK to GitHub Releases?'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release tag when running manually (e.g. v1.2.6; leave empty to use app version)'
+        required: false
+        type: string
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Signed Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      APP_VARIANT: production
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || 'https://yxqdquynlgfbxyultsux.supabase.co' }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_GRjzLk5J0N15SBcUhr2zMQ_1SJ9JEqe' }}
+      EXPO_PUBLIC_SITE_URL: ${{ secrets.EXPO_PUBLIC_SITE_URL || 'https://baseera.app' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Verify Android SDK & accept licenses
+        run: |
+          if [ -z "$ANDROID_HOME" ] && [ -n "$ANDROID_SDK_ROOT" ]; then
+            echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+            export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          fi
+          echo "Using ANDROID_HOME=$ANDROID_HOME"
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          fi
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Node dependencies
+        run: npm ci || npm install
+
+      - name: Configure Android Release Signing (from Secrets)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p "$HOME/.gradle"
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEY_ALIAS" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_PASS" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > "$HOME/.gradle/release.keystore"
+            {
+              echo "BASEERAH_UPLOAD_STORE_FILE=$HOME/.gradle/release.keystore"
+              echo "BASEERAH_UPLOAD_KEY_ALIAS=$KEY_ALIAS"
+              echo "BASEERAH_UPLOAD_STORE_PASSWORD=$STORE_PASS"
+              echo "BASEERAH_UPLOAD_KEY_PASSWORD=$KEY_PASS"
+            } >> "$HOME/.gradle/gradle.properties"
+            echo "Release upload keystore configured."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secrets are not set; APK will use default debug signing key."
+          fi
+
+      - name: Prebuild Android native project
+        run: npx expo prebuild --platform android --clean
+
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a -Pandroid.enableMinifyInReleaseBuilds=true -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m"
+
+      - name: Stage APK artifact
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk baseera-release.apk
+          ls -lh baseera-release.apk
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            APP_VER=$(node -p "require('./package.json').version")
+            echo "tag=v${APP_VER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseera-release-apk
+          path: baseera-release.apk
+          retention-days: 30
+
+      - name: Publish APK to GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: baseera-release.apk
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Baseera ${{ steps.meta.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
